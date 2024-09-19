@@ -1,16 +1,9 @@
-FULL CODE ARDUINO
-
-Código Arduino (ESP8266 ou ESP32)
 // Incluindo as bibliotecas necessárias
+#include <Ethernet.h>         // Biblioteca para Ethernet
+#include <EthernetClient.h>   // Cliente Ethernet
+#include <base64.h>           // Biblioteca para codificar o Basic Auth (Twilio)
 
-
-#include <ESP8266WiFi.h>     // Para ESP8266. Se estiver usando ESP32, troque para WiFi.h
-#include <ESP8266HTTPClient.h>  // Para fazer requisições HTTP
-#include <WiFiClientSecure.h>    // Para HTTPS seguro (necessário para Twilio)
-
-Definindo constantes
-
-// Definir os pinos dos sensores ultrassônicos
+// Definindo constantes
 #define TRIG_PIN_1  D1  // Pino de Trigger do sensor 1
 #define ECHO_PIN_1  D2  // Pino de Echo do sensor 1
 #define TRIG_PIN_2  D3
@@ -22,14 +15,15 @@ Definindo constantes
 #define TRIG_PIN_5  D9
 #define ECHO_PIN_5  D10
 
-// Informações da rede Wi-Fi
-const char* ssid = "SEU_SSID"; // Coloque o nome da sua rede Wi-Fi
-const char* password = "SUA_SENHA"; // Coloque a senha da sua rede Wi-Fi
+// Informações da rede Ethernet
+byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }; // Endereço MAC do dispositivo
+IPAddress ip(192, 168, 1, 177); // Endereço IP fixo do dispositivo (substitua conforme sua rede)
 
 // Informações do Twilio
-const char* account_sid = "SEU_SID";     // Seu Account SID da Twilio
+const char* account_sid = "SEU_SID";       // Seu Account SID da Twilio
 const char* auth_token = "SEU_AUTH_TOKEN"; // Seu Auth Token da Twilio
 const char* from_number = "whatsapp:+14155238886"; // Número Twilio habilitado para WhatsApp
+
 // Informações dos números destinatários (lista de números)
 const char* recipient_numbers[] = {
   "whatsapp:+SEU_NUMERO1",
@@ -38,80 +32,76 @@ const char* recipient_numbers[] = {
 };
 int total_recipients = sizeof(recipient_numbers) / sizeof(recipient_numbers[0]);  // Calcula o número total de destinatários
 
-
-
-Função para conectar no Wi-Fi
-
-void setup_wifi() {
-  Serial.print("Conectando à rede Wi-Fi");
-  WiFi.begin(ssid, password);  // Inicia a conexão com o Wi-Fi
-
-  while (WiFi.status() != WL_CONNECTED) {  // Espera até que a conexão seja estabelecida
-    delay(1000);
-    Serial.print(".");
+// Função para conectar no Ethernet
+void setup_ethernet() {
+  Serial.print("Conectando à rede Ethernet...");
+  if (Ethernet.begin(mac) == 0) {
+    Serial.println("Falha ao obter endereço IP, configurando um IP fixo.");
+    Ethernet.begin(mac, ip);
   }
-  
-  Serial.println("\nWi-Fi conectado!");
+  delay(1000);
+  Serial.println("Ethernet conectada!");
   Serial.print("Endereço IP: ");
-  Serial.println(WiFi.localIP()); // Exibe o IP que o dispositivo recebeu
+  Serial.println(Ethernet.localIP()); // Exibe o IP que o dispositivo recebeu
 }
 
-Função para medir distância com sensores ultrassônicos
-
+// Função para medir distância com sensores ultrassônicos
 long getDistance(int trigPin, int echoPin) {
   digitalWrite(trigPin, LOW);  // Garante que o Trigger esteja em LOW
   delayMicroseconds(2);
   digitalWrite(trigPin, HIGH);  // Envia um pulso de 10 microsegundos para o Trigger
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
-  
+
   long duration = pulseIn(echoPin, HIGH);  // Mede o tempo que o Echo ficou em HIGH
   long distance = duration * 0.034 / 2;    // Converte o tempo em distância (cm)
-  
+
   return distance;  // Retorna a distância calculada
 }
 
-Função para enviar mensagem via Twilio
-
+// Função para enviar mensagem via Twilio
 void sendWhatsAppMessage(String message) {
-  if (WiFi.status() == WL_CONNECTED) {
-    WiFiClientSecure client;  // Cliente seguro para HTTPS
-    client.setInsecure();     // Ignora problemas de certificado SSL
+  EthernetClient client;  // Cliente Ethernet
 
-    HTTPClient https;
+  for (int i = 0; i < total_recipients; i++) {  // Loop pelos destinatários
+    String to_number = recipient_numbers[i];    // Pega o número atual
 
-    for (int i = 0; i < total_recipients; i++) {  // Loop pelos destinatários
-      String to_number = recipient_numbers[i];    // Pega o número atual
-      https.begin(client, "https://api.twilio.com/2010-04-01/Accounts/" + String(account_sid) + "/Messages.json");
-      https.addHeader("Authorization", "Basic " + base64::encode(String(account_sid) + ":" + String(auth_token)));
-      https.addHeader("Content-Type", "application/x-www-form-urlencoded");
-
-      // Preparando os parâmetros da requisição
+    // Conectar ao servidor Twilio
+    if (client.connect("api.twilio.com", 443)) {
+      String auth = base64::encode(String(account_sid) + ":" + String(auth_token));
       String requestBody = "To=" + to_number + "&From=" + String(from_number) + "&Body=" + message;
 
-      // Envia o POST para o servidor da Twilio
-      int httpCode = https.POST(requestBody);
+      // Enviando a requisição HTTP POST
+      client.println("POST /2010-04-01/Accounts/" + String(account_sid) + "/Messages.json HTTP/1.1");
+      client.println("Host: api.twilio.com");
+      client.println("Authorization: Basic " + auth);
+      client.println("Content-Type: application/x-www-form-urlencoded");
+      client.print("Content-Length: ");
+      client.println(requestBody.length());
+      client.println(); // Linha em branco para separar cabeçalhos do corpo
+      client.println(requestBody); // Corpo da requisição
 
-      // Exibe o resultado no monitor serial
-      if (httpCode > 0) {
-        Serial.printf("Mensagem enviada para %s, Código de resposta: %d\n", to_number.c_str(), httpCode);
-        String response = https.getString();
-        Serial.println(response);
-      } else {
-        Serial.printf("Erro ao enviar para %s: %s\n", to_number.c_str(), https.errorToString(httpCode).c_str());
+      // Esperar pela resposta do servidor
+      while (client.connected()) {
+        if (client.available()) {
+          String line = client.readStringUntil('\n');
+          Serial.println(line); // Exibir resposta no monitor serial
+          if (line.length() == 0) {
+            break; // Termina quando chegar ao final da resposta
+          }
+        }
       }
-
-      https.end();  // Fecha a conexão
+      client.stop(); // Fecha a conexão
+    } else {
+      Serial.printf("Falha na conexão com o Twilio para %s\n", to_number);
     }
-  } else {
-    Serial.println("Wi-Fi desconectado. Não foi possível enviar a mensagem.");
   }
 }
-Função de Setup (inicialização)
 
+// Função de Setup (inicialização)
 void setup() {
   Serial.begin(115200);  // Inicia o monitor serial
-  setup_wifi();  // Conecta ao Wi-Fi
+  setup_ethernet();  // Conecta ao Ethernet
 
   // Configurando os pinos dos sensores ultrassônicos
   pinMode(TRIG_PIN_1, OUTPUT);
@@ -126,8 +116,7 @@ void setup() {
   pinMode(ECHO_PIN_5, INPUT);
 }
 
-Função Loop (execução contínua)
-
+// Função Loop (execução contínua)
 void loop() {
   // Capturando as distâncias dos sensores
   long distance1 = getDistance(TRIG_PIN_1, ECHO_PIN_1);
@@ -135,19 +124,25 @@ void loop() {
   long distance3 = getDistance(TRIG_PIN_3, ECHO_PIN_3);
   long distance4 = getDistance(TRIG_PIN_4, ECHO_PIN_4);
   long distance5 = getDistance(TRIG_PIN_5, ECHO_PIN_5);
-  
+
   // Exibindo os valores no monitor serial
   Serial.printf("Distância Sensor 1: %ld cm\n", distance1);
   Serial.printf("Distância Sensor 2: %ld cm\n", distance2);
   Serial.printf("Distância Sensor 3: %ld cm\n", distance3);
   Serial.printf("Distância Sensor 4: %ld cm\n", distance4);
   Serial.printf("Distância Sensor 5: %ld cm\n", distance5);
-  
+
   // Se a distância de algum sensor mudar drasticamente (exemplo: estacionamento cheio)
   if (distance1 < 50 || distance2 < 50 || distance3 < 50 || distance4 < 50 || distance5 < 50) {
-    String message = "Vagas estão ocupadas! Distâncias: " + String(distance1) + ", " + String(distance2) + ", " + String(distance3) + ", " + String(distance4) + ", " + String(distance5) + " cm";
+    String message = "Vagas estão ocupadas! Distâncias: " +
+                     String(distance1) + ", " +
+                     String(distance2) + ", " +
+                     String(distance3) + ", " +
+                     String(distance4) + ", " +
+                     String(distance5) + " cm";
     sendWhatsAppMessage(message);  // Envia a mensagem via WhatsApp
   }
-  
+
   delay(5000);  // Atraso de 5 segundos entre as leituras
 }
+
