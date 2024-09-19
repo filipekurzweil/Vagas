@@ -1,0 +1,62 @@
+import serial
+import time
+from twilio.rest import Client
+
+# Configurações do Twilio
+account_sid = 'SEU_ACCOUNT_SID'  # Substitua pelo seu Account SID do Twilio
+auth_token = 'SEU_AUTH_TOKEN'    # Substitua pelo seu Auth Token do Twilio
+client = Client(account_sid, auth_token)
+
+# Função para enviar mensagem via WhatsApp
+def enviar_notificacao_whatsapp(mensagem):
+    from_whatsapp_number = 'whatsapp:+14155238886'  # Número Twilio para WhatsApp
+    to_whatsapp_number = 'whatsapp:+SEU_NUMERO_CELULAR'  # Seu número de WhatsApp
+    client.messages.create(body=mensagem,
+                           from_=from_whatsapp_number,
+                           to=to_whatsapp_number)
+
+# Configuração da porta serial (verifique a porta no seu sistema: 'COM3', '/dev/ttyUSB0', etc.)
+try:
+    arduino = serial.Serial('COM3', 9600, timeout=1)  # Ajustar a porta conforme necessário
+    time.sleep(2)  # Espera a inicialização da conexão serial
+    print("Conexão com o Arduino estabelecida com sucesso.")
+except serial.SerialException as e:
+    print(f"Erro ao conectar ao Arduino: {e}")
+    exit()
+
+# Função para ler dados do Arduino
+def ler_dados_arduino():
+    try:
+        if arduino.in_waiting > 0:  # Verifica se há dados disponíveis para leitura
+            dados = arduino.readline().decode('utf-8').strip()  # Lê os dados e remove espaços em branco e quebras de linha
+            if dados:
+                return [int(vaga) for vaga in dados.split(',')]  # Converte a string em uma lista de inteiros
+    except Exception as e:
+        print(f"Erro na leitura dos dados: {e}")
+    return []
+
+# Função para monitorar as vagas e enviar notificações via WhatsApp
+def monitorar_vagas():
+    vagas_anterior = []  # Armazena o estado anterior das vagas
+    while True:
+        status_vagas = ler_dados_arduino()  # Lê o status atual das vagas
+        if status_vagas:  # Verifica se houve uma leitura válida
+            if status_vagas != vagas_anterior:  # Se o status mudou
+                vagas_livres = status_vagas.count(0)  # Conta quantas vagas estão livres
+                mensagem = f"Há {vagas_livres} vagas livres no estacionamento de visitantes."
+                print(mensagem)  # Exibe a mensagem no console
+                enviar_notificacao_whatsapp(mensagem)  # Envia a mensagem via WhatsApp
+                vagas_anterior = status_vagas  # Atualiza o estado anterior
+        time.sleep(2)  # Espera 2 segundos antes da próxima leitura
+
+if __name__ == "__main__":
+    try:
+        print("Iniciando monitoramento das vagas de visitantes...")
+        monitorar_vagas()  # Inicia a função de monitoramento
+    except KeyboardInterrupt:
+        print("\nMonitoramento encerrado pelo usuário.")
+    except Exception as e:
+        print(f"Erro durante o monitoramento: {e}")
+    finally:
+        if arduino.is_open:
+            arduino.close()  # Fecha a conexão serial ao finalizar
